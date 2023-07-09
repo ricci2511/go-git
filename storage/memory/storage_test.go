@@ -4,17 +4,17 @@ import (
 	"testing"
 
 	"github.com/go-git/go-git/v5/storage/test"
-	. "gopkg.in/check.v1"
+	"github.com/stretchr/testify/suite"
 )
-
-func Test(t *testing.T) { TestingT(t) }
 
 type StorageSuite struct {
 	test.BaseStorageSuite
 }
 
-var _ = Suite(&StorageSuite{})
+func (s *StorageSuite) SetupTest() {
+	s.BaseStorageSuite.BaseStorage = test.NewBaseStorage(NewStorage())
+}
 
-func (s *StorageSuite) SetUpTest(c *C) {
-	s.BaseStorageSuite = test.NewBaseStorageSuite(NewStorage())
+func TestStorageSuite(t *testing.T) {
+	suite.Run(t, new(StorageSuite))
 }

@@ -13,7 +13,7 @@ import (
 	"github.com/go-git/go-git/v5/storage"
 
 	fixtures "github.com/go-git/go-git-fixtures/v4"
-	. "gopkg.in/check.v1"
+	"github.com/stretchr/testify/suite"
 )
 
 type Storer interface {
@@ -31,14 +31,19 @@ type TestObject struct {
 	Type   plumbing.ObjectType
 }
 
-type BaseStorageSuite struct {
+type BaseStorage struct {
 	Storer Storer
 
 	validTypes  []plumbing.ObjectType
 	testObjects map[plumbing.ObjectType]TestObject
 }
 
-func NewBaseStorageSuite(s Storer) BaseStorageSuite {
+type BaseStorageSuite struct {
+	suite.Suite
+	BaseStorage
+}
+
+func NewBaseStorage(s Storer) BaseStorage {
 	commit := &plumbing.MemoryObject{}
 	commit.SetType(plumbing.CommitObject)
 	tree := &plumbing.MemoryObject{}
@@ -48,7 +53,7 @@ func NewBaseStorageSuite(s Storer) BaseStorageSuite {
 	tag := &plumbing.MemoryObject{}
 	tag.SetType(plumbing.TagObject)
 
-	return BaseStorageSuite{
+	return BaseStorage{
 		Storer: s,
 		validTypes: []plumbing.ObjectType{
 			plumbing.CommitObject,
@@ -64,25 +69,23 @@ func NewBaseStorageSuite(s Storer) BaseStorageSuite {
 		}}
 }
 
-func (s *BaseStorageSuite) TearDownTest(c *C) {
+func (s *BaseStorageSuite) TearDownTest() {
 	fixtures.Clean()
 }
 
-func (s *BaseStorageSuite) TestSetEncodedObjectAndEncodedObject(c *C) {
+func (s *BaseStorageSuite) TestSetEncodedObjectAndEncodedObject() {
 	for _, to := range s.testObjects {
-		comment := Commentf("failed for type %s", to.Type.String())
-
 		h, err := s.Storer.SetEncodedObject(to.Object)
-		c.Assert(err, IsNil)
-		c.Assert(h.String(), Equals, to.Hash, comment)
+		s.NoError(err)
+		s.Equalf(to.Hash, h.String(), "failed for type %s", to.Type.String())
 
 		o, err := s.Storer.EncodedObject(to.Type, h)
-		c.Assert(err, IsNil)
-		c.Assert(objectEquals(o, to.Object), IsNil)
+		s.NoError(err)
+		s.NoError(objectEquals(o, to.Object))
 
 		o, err = s.Storer.EncodedObject(plumbing.AnyObject, h)
-		c.Assert(err, IsNil)
-		c.Assert(objectEquals(o, to.Object), IsNil)
+		s.NoError(err)
+		s.NoError(objectEquals(o, to.Object))
 
 		for _, t := range s.validTypes {
 			if t == to.Type {
@@ -90,43 +93,42 @@ func (s *BaseStorageSuite) TestSetEncodedObjectAndEncodedObject(c *C) {
 			}
 
 			o, err = s.Storer.EncodedObject(t, h)
-			c.Assert(o, IsNil)
-			c.Assert(err, Equals, plumbing.ErrObjectNotFound)
+			s.Nil(o)
+			s.EqualError(err, plumbing.ErrObjectNotFound.Error())
 		}
 	}
 }
 
-func (s *BaseStorageSuite) TestSetEncodedObjectInvalid(c *C) {
+func (s *BaseStorageSuite) TestSetEncodedObjectInvalid() {
 	o := s.Storer.NewEncodedObject()
 	o.SetType(plumbing.REFDeltaObject)
 
 	_, err := s.Storer.SetEncodedObject(o)
-	c.Assert(err, NotNil)
+	s.Error(err)
 }
 
-func (s *BaseStorageSuite) TestIterEncodedObjects(c *C) {
+func (s *BaseStorageSuite) TestIterEncodedObjects() {
 	for _, o := range s.testObjects {
 		h, err := s.Storer.SetEncodedObject(o.Object)
-		c.Assert(err, IsNil)
-		c.Assert(h, Equals, o.Object.Hash())
+		s.NoError(err)
+		s.Equal(h, o.Object.Hash())
 	}
 
 	for _, t := range s.validTypes {
-		comment := Commentf("failed for type %s)", t.String())
 		i, err := s.Storer.IterEncodedObjects(t)
-		c.Assert(err, IsNil, comment)
+		s.NoErrorf(err, "failed for type %s", t.String())
 
 		o, err := i.Next()
-		c.Assert(err, IsNil)
-		c.Assert(objectEquals(o, s.testObjects[t].Object), IsNil)
+		s.NoError(err)
+		s.NoError(objectEquals(o, s.testObjects[t].Object))
 
 		o, err = i.Next()
-		c.Assert(o, IsNil)
-		c.Assert(err, Equals, io.EOF, comment)
+		s.Nil(o)
+		s.EqualErrorf(err, io.EOF.Error(), "failed for type %s", t.String())
 	}
 
 	i, err := s.Storer.IterEncodedObjects(plumbing.AnyObject)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	foundObjects := []plumbing.EncodedObject{}
 	i.ForEach(func(o plumbing.EncodedObject) error {
@@ -134,7 +136,7 @@ func (s *BaseStorageSuite) TestIterEncodedObjects(c *C) {
 		return nil
 	})
 
-	c.Assert(foundObjects, HasLen, len(s.testObjects))
+	s.Len(foundObjects, len(s.testObjects))
 	for _, to := range s.testObjects {
 		found := false
 		for _, o := range foundObjects {
@@ -143,60 +145,60 @@ func (s *BaseStorageSuite) TestIterEncodedObjects(c *C) {
 				break
 			}
 		}
-		c.Assert(found, Equals, true, Commentf("Object of type %s not found", to.Type.String()))
+		s.Truef(found, "Object of type %s not found", to.Type.String())
 	}
 }
 
-func (s *BaseStorageSuite) TestPackfileWriter(c *C) {
+func (s *BaseStorageSuite) TestPackfileWriter() {
 	pwr, ok := s.Storer.(storer.PackfileWriter)
 	if !ok {
-		c.Skip("not a storer.PackWriter")
+		s.T().Skip("not a storer.PackWriter")
 	}
 
 	pw, err := pwr.PackfileWriter()
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	f := fixtures.Basic().One()
 	_, err = io.Copy(pw, f.Packfile())
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	err = pw.Close()
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	iter, err := s.Storer.IterEncodedObjects(plumbing.AnyObject)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 	objects := 0
 	err = iter.ForEach(func(plumbing.EncodedObject) error {
 		objects++
 		return nil
 	})
-	c.Assert(err, IsNil)
-	c.Assert(objects, Equals, 31)
+	s.NoError(err)
+	s.Equal(objects, 31)
 }
 
-func (s *BaseStorageSuite) TestObjectStorerTxSetEncodedObjectAndCommit(c *C) {
+func (s *BaseStorageSuite) TestObjectStorerTxSetEncodedObjectAndCommit() {
 	storer, ok := s.Storer.(storer.Transactioner)
 	if !ok {
-		c.Skip("not a plumbing.ObjectStorerTx")
+		s.T().Skip("not a plumbing.ObjectStorerTx")
 	}
 
 	tx := storer.Begin()
 	for _, o := range s.testObjects {
 		h, err := tx.SetEncodedObject(o.Object)
-		c.Assert(err, IsNil)
-		c.Assert(h.String(), Equals, o.Hash)
+		s.NoError(err)
+		s.Equal(h.String(), o.Hash)
 	}
 
 	iter, err := s.Storer.IterEncodedObjects(plumbing.AnyObject)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 	_, err = iter.Next()
-	c.Assert(err, Equals, io.EOF)
+	s.EqualError(err, io.EOF.Error())
 
 	err = tx.Commit()
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	iter, err = s.Storer.IterEncodedObjects(plumbing.AnyObject)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	var count int
 	iter.ForEach(func(o plumbing.EncodedObject) error {
@@ -204,180 +206,180 @@ func (s *BaseStorageSuite) TestObjectStorerTxSetEncodedObjectAndCommit(c *C) {
 		return nil
 	})
 
-	c.Assert(count, Equals, 4)
+	s.Equal(count, 4)
 }
 
-func (s *BaseStorageSuite) TestObjectStorerTxSetObjectAndGetObject(c *C) {
+func (s *BaseStorageSuite) TestObjectStorerTxSetObjectAndGetObject() {
 	storer, ok := s.Storer.(storer.Transactioner)
 	if !ok {
-		c.Skip("not a plumbing.ObjectStorerTx")
+		s.T().Skip("not a plumbing.ObjectStorerTx")
 	}
 
 	tx := storer.Begin()
 	for _, expected := range s.testObjects {
 		h, err := tx.SetEncodedObject(expected.Object)
-		c.Assert(err, IsNil)
-		c.Assert(h.String(), Equals, expected.Hash)
+		s.NoError(err)
+		s.Equal(h.String(), expected.Hash)
 
 		o, err := tx.EncodedObject(expected.Type, plumbing.NewHash(expected.Hash))
-		c.Assert(err, IsNil)
-		c.Assert(o.Hash().String(), DeepEquals, expected.Hash)
+		s.NoError(err)
+		s.EqualValues(o.Hash().String(), expected.Hash)
 	}
 }
 
-func (s *BaseStorageSuite) TestObjectStorerTxGetObjectNotFound(c *C) {
+func (s *BaseStorageSuite) TestObjectStorerTxGetObjectNotFound() {
 	storer, ok := s.Storer.(storer.Transactioner)
 	if !ok {
-		c.Skip("not a plumbing.ObjectStorerTx")
+		s.T().Skip("not a plumbing.ObjectStorerTx")
 	}
 
 	tx := storer.Begin()
 	o, err := tx.EncodedObject(plumbing.AnyObject, plumbing.ZeroHash)
-	c.Assert(o, IsNil)
-	c.Assert(err, Equals, plumbing.ErrObjectNotFound)
+	s.Nil(o)
+	s.EqualError(err, plumbing.ErrObjectNotFound.Error())
 }
 
-func (s *BaseStorageSuite) TestObjectStorerTxSetObjectAndRollback(c *C) {
+func (s *BaseStorageSuite) TestObjectStorerTxSetObjectAndRollback() {
 	storer, ok := s.Storer.(storer.Transactioner)
 	if !ok {
-		c.Skip("not a plumbing.ObjectStorerTx")
+		s.T().Skip("not a plumbing.ObjectStorerTx")
 	}
 
 	tx := storer.Begin()
 	for _, o := range s.testObjects {
 		h, err := tx.SetEncodedObject(o.Object)
-		c.Assert(err, IsNil)
-		c.Assert(h.String(), Equals, o.Hash)
+		s.NoError(err)
+		s.Equal(h.String(), o.Hash)
 	}
 
 	err := tx.Rollback()
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	iter, err := s.Storer.IterEncodedObjects(plumbing.AnyObject)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 	_, err = iter.Next()
-	c.Assert(err, Equals, io.EOF)
+	s.EqualError(err, io.EOF.Error())
 }
 
-func (s *BaseStorageSuite) TestSetReferenceAndGetReference(c *C) {
+func (s *BaseStorageSuite) TestSetReferenceAndGetReference() {
 	err := s.Storer.SetReference(
 		plumbing.NewReferenceFromStrings("foo", "bc9968d75e48de59f0870ffb71f5e160bbbdcf52"),
 	)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	err = s.Storer.SetReference(
 		plumbing.NewReferenceFromStrings("bar", "482e0eada5de4039e6f216b45b3c9b683b83bfa"),
 	)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	e, err := s.Storer.Reference(plumbing.ReferenceName("foo"))
-	c.Assert(err, IsNil)
-	c.Assert(e.Hash().String(), Equals, "bc9968d75e48de59f0870ffb71f5e160bbbdcf52")
+	s.NoError(err)
+	s.Equal(e.Hash().String(), "bc9968d75e48de59f0870ffb71f5e160bbbdcf52")
 }
 
-func (s *BaseStorageSuite) TestCheckAndSetReference(c *C) {
+func (s *BaseStorageSuite) TestCheckAndSetReference() {
 	err := s.Storer.SetReference(
 		plumbing.NewReferenceFromStrings("foo", "482e0eada5de4039e6f216b45b3c9b683b83bfa"),
 	)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	err = s.Storer.CheckAndSetReference(
 		plumbing.NewReferenceFromStrings("foo", "bc9968d75e48de59f0870ffb71f5e160bbbdcf52"),
 		plumbing.NewReferenceFromStrings("foo", "482e0eada5de4039e6f216b45b3c9b683b83bfa"),
 	)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	e, err := s.Storer.Reference(plumbing.ReferenceName("foo"))
-	c.Assert(err, IsNil)
-	c.Assert(e.Hash().String(), Equals, "bc9968d75e48de59f0870ffb71f5e160bbbdcf52")
+	s.NoError(err)
+	s.Equal(e.Hash().String(), "bc9968d75e48de59f0870ffb71f5e160bbbdcf52")
 }
 
-func (s *BaseStorageSuite) TestCheckAndSetReferenceNil(c *C) {
+func (s *BaseStorageSuite) TestCheckAndSetReferenceNil() {
 	err := s.Storer.SetReference(
 		plumbing.NewReferenceFromStrings("foo", "482e0eada5de4039e6f216b45b3c9b683b83bfa"),
 	)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	err = s.Storer.CheckAndSetReference(
 		plumbing.NewReferenceFromStrings("foo", "bc9968d75e48de59f0870ffb71f5e160bbbdcf52"),
 		nil,
 	)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	e, err := s.Storer.Reference(plumbing.ReferenceName("foo"))
-	c.Assert(err, IsNil)
-	c.Assert(e.Hash().String(), Equals, "bc9968d75e48de59f0870ffb71f5e160bbbdcf52")
+	s.NoError(err)
+	s.Equal(e.Hash().String(), "bc9968d75e48de59f0870ffb71f5e160bbbdcf52")
 }
 
-func (s *BaseStorageSuite) TestCheckAndSetReferenceError(c *C) {
+func (s *BaseStorageSuite) TestCheckAndSetReferenceError() {
 	err := s.Storer.SetReference(
 		plumbing.NewReferenceFromStrings("foo", "c3f4688a08fd86f1bf8e055724c84b7a40a09733"),
 	)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	err = s.Storer.CheckAndSetReference(
 		plumbing.NewReferenceFromStrings("foo", "bc9968d75e48de59f0870ffb71f5e160bbbdcf52"),
 		plumbing.NewReferenceFromStrings("foo", "482e0eada5de4039e6f216b45b3c9b683b83bfa"),
 	)
-	c.Assert(err, Equals, storage.ErrReferenceHasChanged)
+	s.EqualError(err, storage.ErrReferenceHasChanged.Error())
 
 	e, err := s.Storer.Reference(plumbing.ReferenceName("foo"))
-	c.Assert(err, IsNil)
-	c.Assert(e.Hash().String(), Equals, "c3f4688a08fd86f1bf8e055724c84b7a40a09733")
+	s.NoError(err)
+	s.Equal(e.Hash().String(), "c3f4688a08fd86f1bf8e055724c84b7a40a09733")
 }
 
-func (s *BaseStorageSuite) TestRemoveReference(c *C) {
+func (s *BaseStorageSuite) TestRemoveReference() {
 	err := s.Storer.SetReference(
 		plumbing.NewReferenceFromStrings("foo", "bc9968d75e48de59f0870ffb71f5e160bbbdcf52"),
 	)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	err = s.Storer.RemoveReference(plumbing.ReferenceName("foo"))
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	_, err = s.Storer.Reference(plumbing.ReferenceName("foo"))
-	c.Assert(err, Equals, plumbing.ErrReferenceNotFound)
+	s.EqualError(err, plumbing.ErrReferenceNotFound.Error())
 }
 
-func (s *BaseStorageSuite) TestRemoveReferenceNonExistent(c *C) {
+func (s *BaseStorageSuite) TestRemoveReferenceNonExistent() {
 	err := s.Storer.SetReference(
 		plumbing.NewReferenceFromStrings("foo", "bc9968d75e48de59f0870ffb71f5e160bbbdcf52"),
 	)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	err = s.Storer.RemoveReference(plumbing.ReferenceName("nonexistent"))
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	e, err := s.Storer.Reference(plumbing.ReferenceName("foo"))
-	c.Assert(err, IsNil)
-	c.Assert(e.Hash().String(), Equals, "bc9968d75e48de59f0870ffb71f5e160bbbdcf52")
+	s.NoError(err)
+	s.Equal(e.Hash().String(), "bc9968d75e48de59f0870ffb71f5e160bbbdcf52")
 }
 
-func (s *BaseStorageSuite) TestGetReferenceNotFound(c *C) {
+func (s *BaseStorageSuite) TestGetReferenceNotFound() {
 	r, err := s.Storer.Reference(plumbing.ReferenceName("bar"))
-	c.Assert(err, Equals, plumbing.ErrReferenceNotFound)
-	c.Assert(r, IsNil)
+	s.EqualError(err, plumbing.ErrReferenceNotFound.Error())
+	s.Nil(r)
 }
 
-func (s *BaseStorageSuite) TestIterReferences(c *C) {
+func (s *BaseStorageSuite) TestIterReferences() {
 	err := s.Storer.SetReference(
 		plumbing.NewReferenceFromStrings("refs/foo", "bc9968d75e48de59f0870ffb71f5e160bbbdcf52"),
 	)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	i, err := s.Storer.IterReferences()
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	e, err := i.Next()
-	c.Assert(err, IsNil)
-	c.Assert(e.Hash().String(), Equals, "bc9968d75e48de59f0870ffb71f5e160bbbdcf52")
+	s.NoError(err)
+	s.Equal(e.Hash().String(), "bc9968d75e48de59f0870ffb71f5e160bbbdcf52")
 
 	e, err = i.Next()
-	c.Assert(e, IsNil)
-	c.Assert(err, Equals, io.EOF)
+	s.Nil(e)
+	s.EqualError(err, io.EOF.Error())
 }
 
-func (s *BaseStorageSuite) TestSetShallowAndShallow(c *C) {
+func (s *BaseStorageSuite) TestSetShallowAndShallow() {
 	expected := []plumbing.Hash{
 		plumbing.NewHash("b66c08ba28aa1f81eb06a1127aa3936ff77e5e2c"),
 		plumbing.NewHash("c3f4688a08fd86f1bf8e055724c84b7a40a09733"),
@@ -385,14 +387,14 @@ func (s *BaseStorageSuite) TestSetShallowAndShallow(c *C) {
 	}
 
 	err := s.Storer.SetShallow(expected)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	result, err := s.Storer.Shallow()
-	c.Assert(err, IsNil)
-	c.Assert(result, DeepEquals, expected)
+	s.NoError(err)
+	s.EqualValues(result, expected)
 }
 
-func (s *BaseStorageSuite) TestSetConfigAndConfig(c *C) {
+func (s *BaseStorageSuite) TestSetConfigAndConfig() {
 	expected := config.NewConfig()
 	expected.Core.IsBare = true
 	expected.Remotes["foo"] = &config.RemoteConfig{
@@ -401,86 +403,86 @@ func (s *BaseStorageSuite) TestSetConfigAndConfig(c *C) {
 	}
 
 	err := s.Storer.SetConfig(expected)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	cfg, err := s.Storer.Config()
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
-	c.Assert(cfg.Core.IsBare, DeepEquals, expected.Core.IsBare)
-	c.Assert(cfg.Remotes, DeepEquals, expected.Remotes)
+	s.EqualValues(cfg.Core.IsBare, expected.Core.IsBare)
+	s.EqualValues(cfg.Remotes, expected.Remotes)
 }
 
-func (s *BaseStorageSuite) TestIndex(c *C) {
+func (s *BaseStorageSuite) TestIndex() {
 	expected := &index.Index{}
 	expected.Version = 2
 
 	idx, err := s.Storer.Index()
-	c.Assert(err, IsNil)
-	c.Assert(idx, DeepEquals, expected)
+	s.NoError(err)
+	s.EqualValues(idx, expected)
 }
 
-func (s *BaseStorageSuite) TestSetIndexAndIndex(c *C) {
+func (s *BaseStorageSuite) TestSetIndexAndIndex() {
 	expected := &index.Index{}
 	expected.Version = 2
 
 	err := s.Storer.SetIndex(expected)
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	idx, err := s.Storer.Index()
-	c.Assert(err, IsNil)
-	c.Assert(idx, DeepEquals, expected)
+	s.NoError(err)
+	s.EqualValues(idx, expected)
 }
 
-func (s *BaseStorageSuite) TestSetConfigInvalid(c *C) {
+func (s *BaseStorageSuite) TestSetConfigInvalid() {
 	cfg := config.NewConfig()
 	cfg.Remotes["foo"] = &config.RemoteConfig{}
 
 	err := s.Storer.SetConfig(cfg)
-	c.Assert(err, NotNil)
+	s.Error(err)
 }
 
-func (s *BaseStorageSuite) TestModule(c *C) {
+func (s *BaseStorageSuite) TestModule() {
 	storer, err := s.Storer.Module("foo")
-	c.Assert(err, IsNil)
-	c.Assert(storer, NotNil)
+	s.NoError(err)
+	s.NotNil(storer)
 
 	storer, err = s.Storer.Module("foo")
-	c.Assert(err, IsNil)
-	c.Assert(storer, NotNil)
+	s.NoError(err)
+	s.NotNil(storer)
 }
 
-func (s *BaseStorageSuite) TestDeltaObjectStorer(c *C) {
+func (s *BaseStorageSuite) TestDeltaObjectStorer() {
 	dos, ok := s.Storer.(storer.DeltaObjectStorer)
 	if !ok {
-		c.Skip("not an DeltaObjectStorer")
+		s.T().Skip("not an DeltaObjectStorer")
 	}
 
 	pwr, ok := s.Storer.(storer.PackfileWriter)
 	if !ok {
-		c.Skip("not a storer.PackWriter")
+		s.T().Skip("not a storer.PackWriter")
 	}
 
 	pw, err := pwr.PackfileWriter()
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	f := fixtures.Basic().One()
 	_, err = io.Copy(pw, f.Packfile())
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	err = pw.Close()
-	c.Assert(err, IsNil)
+	s.NoError(err)
 
 	h := plumbing.NewHash("32858aad3c383ed1ff0a0f9bdf231d54a00c9e88")
 	obj, err := dos.DeltaObject(plumbing.AnyObject, h)
-	c.Assert(err, IsNil)
-	c.Assert(obj.Type(), Equals, plumbing.BlobObject)
+	s.NoError(err)
+	s.EqualValues(obj.Type(), plumbing.BlobObject)
 
 	h = plumbing.NewHash("aa9b383c260e1d05fbbf6b30a02914555e20c725")
 	obj, err = dos.DeltaObject(plumbing.AnyObject, h)
-	c.Assert(err, IsNil)
-	c.Assert(obj.Type(), Equals, plumbing.OFSDeltaObject)
+	s.NoError(err)
+	s.EqualValues(obj.Type(), plumbing.OFSDeltaObject)
 	_, ok = obj.(plumbing.DeltaObject)
-	c.Assert(ok, Equals, true)
+	s.Equal(ok, true)
 }
 
 func objectEquals(a plumbing.EncodedObject, b plumbing.EncodedObject) error {
